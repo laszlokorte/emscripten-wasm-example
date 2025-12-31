@@ -1,0 +1,250 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Emscripten Test</title>
+    </head>
+    <body>
+        <div class="app">
+            <h1>Emscripten</h1>
+            <p>Simple WASM+WebGL example using Emscripten.</p>
+            <div class="grid">
+                <section>
+                    <h2>Canvas</h2>
+                    <canvas id="c" width="800" height="600"></canvas>
+                </section>
+                <section>
+                    <h2>Log</h2>
+                    <pre id="lkLog"></pre>
+                </section>
+            </div>
+
+            <script src="main.js">
+                /* main.c
+
+                #include <emscripten/emscripten.h>
+                #include <math.h>
+
+
+                EMSCRIPTEN_KEEPALIVE
+                int map_mouse(int a, int b, int w, int h) {
+                  int dx = a - w / 2;
+                  int dy = b - h / 2;
+                  return (int)(1000 * sqrtl(dx * dx + dy * dy) / sqrtl(w * w + h * h) * 4);
+                }
+                */
+
+                /*
+                emcc main.c \
+                  -O2 \
+                  -s WASM=1 \
+                  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
+                  -o main.js
+                */
+            </script>
+            <script>
+                {
+                    function glErr(gl) {
+                        const e = gl.getError();
+                        if (e === gl.NO_ERROR) return;
+                        const map = {
+                            [gl.INVALID_ENUM]: "INVALID_ENUM",
+                            [gl.INVALID_VALUE]: "INVALID_VALUE",
+                            [gl.INVALID_OPERATION]: "INVALID_OPERATION",
+                            [gl.OUT_OF_MEMORY]: "OUT_OF_MEMORY",
+                            [gl.CONTEXT_LOST_WEBGL]: "CONTEXT_LOST_WEBGL",
+                        };
+                        console.error("WebGL error:", map[e] || e);
+                    }
+                    const gl = c.getContext("webgl");
+                    if (!gl) throw "no webgl";
+
+                    // --- Shader ---
+                    const vs = `
+
+                  precision mediump float;
+
+                  uniform float opacity;
+
+                  attribute vec2 pos;
+                  attribute vec3 col;
+
+
+                  varying vec4 fragCol;
+                  void main() {
+                    gl_Position = vec4(pos, 0.0, 1.0);
+                    fragCol = vec4(col.rgb, opacity);
+                  }`;
+                    const fs = `
+
+                  precision mediump float;
+                  varying vec4 fragCol;
+                  void main() {
+                    gl_FragColor = fragCol;
+                  }`;
+
+                    function shader(type, src) {
+                        const s = gl.createShader(type);
+                        gl.shaderSource(s, src);
+                        gl.compileShader(s);
+                        return s;
+                    }
+
+                    const prog = gl.createProgram();
+                    gl.attachShader(prog, shader(gl.VERTEX_SHADER, vs));
+                    glErr(gl);
+                    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, fs));
+                    glErr(gl);
+                    gl.linkProgram(prog);
+                    glErr(gl);
+                    gl.useProgram(prog);
+                    glErr(gl);
+                    const opa = gl.getUniformLocation(prog, "opacity");
+                    const loc = gl.getAttribLocation(prog, "pos");
+                    const col = gl.getAttribLocation(prog, "col");
+
+                    // prettier-ignore
+                    const verts = new Float32Array([
+                    -0.9, -0.9,   1, 0, 0, // x,y,r,g,b
+                     0.9, -0.9,   1, 1, 0, //
+                    -0.9,  0.9,   0, 0, 1, //
+                    -0.9,  0.9,   0, 0, 1, //
+                     0.9, -0.9,   1, 1, 0, //
+                     0.9,  0.9,   0, 1, 0, //
+                ]);
+
+                    const buf = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+                    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+                    gl.enableVertexAttribArray(loc);
+                    gl.enableVertexAttribArray(col);
+                    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 5 * 4, 0);
+                    gl.vertexAttribPointer(
+                        col,
+                        3,
+                        gl.FLOAT,
+                        false,
+                        5 * 4,
+                        4 * 2,
+                    );
+
+                    let m = 1;
+
+                    function render() {
+                        gl.uniform1f(opa, m);
+                        gl.clearColor(0, 0, 0, 0);
+                        gl.clear(gl.COLOR_BUFFER_BIT);
+
+                        gl.useProgram(prog);
+                        gl.drawArrays(gl.TRIANGLES, 0, 6);
+                    }
+
+                    function frame() {
+                        render();
+                        requestAnimationFrame(frame);
+                    }
+                    frame();
+
+                    lkLog.appendChild(
+                        document.createTextNode("WebGL loaded\n"),
+                    );
+
+                    Module.onRuntimeInitialized = () => {
+                        const mapMouse = Module.cwrap("map_mouse", "number", [
+                            "number",
+                            "number",
+                            "number",
+                            "number",
+                        ]);
+                        window.addEventListener("pointermove", (evt) => {
+                            m =
+                                mapMouse(
+                                    evt.clientX,
+                                    evt.clientY,
+                                    window.innerWidth,
+                                    window.innerHeight,
+                                ) / 1000;
+
+                            if (lkLog.childNodes.length > 10) {
+                                lkLog.removeChild(lkLog.firstChild);
+                            }
+                            lkLog.appendChild(
+                                document.createTextNode(m + "\n"),
+                            ); // 5
+                        });
+                        lkLog.appendChild(
+                            document.createTextNode("WASM loaded\n"),
+                        );
+                    };
+                }
+            </script>
+            <style>
+                body {
+                    font-family: monospace;
+                    margin: 0;
+                }
+                h1 {
+                    grid-column: 1 / -1;
+                    grid-row: 1 / span 1;
+                    margin: 0;
+                }
+                h2 {
+                    margin: 0;
+                }
+                .app {
+                    padding: 2em;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1em;
+                }
+                .grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(18em, 1fr));
+                    grid-template-rows: auto 1fr;
+                    gap: 1em;
+                    justify-content: stretch;
+                    align-items: stretch;
+                }
+                section {
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: stretch;
+                    flex-grow: 1;
+                }
+                pre {
+                    background-color: #111;
+                    color: #fff;
+                    padding: 1em;
+                    margin: 0;
+                    flex-grow: 1;
+                }
+                canvas {
+                    background-color: lemonchiffon;
+                }
+                summary {
+                    padding: 1em;
+                    cursor: pointer;
+                    background-color: #eee;
+                    user-select: none;
+                }
+                .scroller {
+                    max-height: 30vh;
+                    overflow: auto;
+                }
+            </style>
+            <details>
+                <summary>Sourcecode</summary>
+                <pre id="lkSource" class="scroller"><script>
+                window.addEventListener('DOMContentLoaded', () => {
+                  const log = lkLog.innerText
+                  lkLog.innerText = ''
+                  lkSource.removeChild(lkSource.firstElementChild)
+                  lkSource.appendChild(document.createTextNode(document.documentElement.outerHTML));
+
+                  lkLog.innerText = log
+                })
+                </script></pre>
+            </details>
+        </div>
+    </body>
+</html>
