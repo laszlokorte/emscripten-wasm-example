@@ -84,6 +84,10 @@
                         };
                         console.error("WebGL error:", map[e] || e);
                     }
+                    lkCanvas.width =
+                        window.devicePixelRatio * lkCanvas.clientWidth;
+                    lkCanvas.height =
+                        window.devicePixelRatio * lkCanvas.clientHeight;
                     const gl = lkCanvas.getContext("webgl");
                     if (!gl) throw "no webgl";
 
