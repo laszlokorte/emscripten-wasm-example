@@ -7,7 +7,7 @@
 #include <math.h>
 
 #define SAMPLE_RATE 44100
-#define BLOCK_SIZE 1024
+#define BLOCK_SIZE 512
 float block[BLOCK_SIZE];
 float phase = 0.0f;
 
