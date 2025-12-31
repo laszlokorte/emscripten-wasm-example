@@ -5,12 +5,15 @@
     </head>
     <body>
         <div class="app">
-            <h1>Emscripten</h1>
-            <p>Simple WASM+WebGL example using Emscripten.</p>
+            <header>
+                <h1>Emscripten</h1>
+                <p>Simple WASM+WebGL example using Emscripten.</p>
+                <p>Click on the canvas to turn sound on/off</p>
+            </header>
             <div class="grid">
                 <section>
                     <h2>Canvas</h2>
-                    <canvas id="c" width="800" height="600"></canvas>
+                    <canvas id="lkCanvas" width="800" height="600"></canvas>
                 </section>
                 <section>
                     <h2>Log</h2>
@@ -20,15 +23,41 @@
 
             <script src="main.js">
                 /* main.c
+                #ifdef __EMSCRIPTEN__
                 #include <emscripten/emscripten.h>
+                #else
+                #define EMSCRIPTEN_KEEPALIVE
+                #endif
+
                 #include <math.h>
+
+                #define SAMPLE_RATE 44100
+                #define BLOCK_SIZE 1024
+                float block[BLOCK_SIZE];
+                float phase = 0.0f;
 
                 EMSCRIPTEN_KEEPALIVE
                 int map_mouse(int a, int b, int w, int h) {
                   int dx = a - w / 2;
                   int dy = b - h / 2;
-                  return (int)(1000 * sqrtl(dx * dx + dy * dy) / sqrtl(w * w + h * h) * 4);
+                  return (int)(1000 * sqrtl(dx * dx + dy * dy) / sqrtl(w * w + h * h) * 2);
                 }
+
+                EMSCRIPTEN_KEEPALIVE
+                float *generate_block(float freq) {
+                  const float step = 2.0f * M_PI * freq / SAMPLE_RATE;
+                  for (int i = 0; i < BLOCK_SIZE; i++) {
+                    block[i] = sinf(phase);
+                    phase += step;
+                    if (phase > 2.0f * M_PI)
+                      phase -= 2.0f * M_PI;
+                  }
+                  return block;
+                }
+
+                EMSCRIPTEN_KEEPALIVE
+                int block_size() { return BLOCK_SIZE; }
+
                 */
 
                 /*
@@ -53,32 +82,27 @@
                         };
                         console.error("WebGL error:", map[e] || e);
                     }
-                    const gl = c.getContext("webgl");
+                    const gl = lkCanvas.getContext("webgl");
                     if (!gl) throw "no webgl";
 
-                    // --- Shader ---
                     const vs = `
-
-                  precision mediump float;
-
-                  uniform float opacity;
-
-                  attribute vec2 pos;
-                  attribute vec3 col;
-
-
-                  varying vec4 fragCol;
-                  void main() {
-                    gl_Position = vec4(pos, 0.0, 1.0);
-                    fragCol = vec4(col.rgb, opacity);
-                  }`;
+                      precision mediump float;
+                      uniform float opacity;
+                      attribute vec2 pos;
+                      attribute vec3 col;
+                      varying vec4 fragCol;
+                      void main() {
+                        gl_Position = vec4(pos, 0.0, 1.0);
+                        fragCol = vec4(col.rgb, opacity);
+                      }
+                    `;
                     const fs = `
-
-                  precision mediump float;
-                  varying vec4 fragCol;
-                  void main() {
-                    gl_FragColor = fragCol;
-                  }`;
+                      precision mediump float;
+                      varying vec4 fragCol;
+                      void main() {
+                        gl_FragColor = fragCol;
+                      }
+                    `;
 
                     function shader(type, src) {
                         const s = gl.createShader(type);
@@ -96,19 +120,20 @@
                     glErr(gl);
                     gl.useProgram(prog);
                     glErr(gl);
+
                     const opa = gl.getUniformLocation(prog, "opacity");
                     const loc = gl.getAttribLocation(prog, "pos");
                     const col = gl.getAttribLocation(prog, "col");
 
                     // prettier-ignore
                     const verts = new Float32Array([
-                    -0.9, -0.9,   1, 0, 0, // x,y,r,g,b
-                     0.9, -0.9,   1, 1, 0, //
-                    -0.9,  0.9,   0, 0, 1, //
-                    -0.9,  0.9,   0, 0, 1, //
-                     0.9, -0.9,   1, 1, 0, //
-                     0.9,  0.9,   0, 1, 0, //
-                ]);
+                        -0.9, -0.9,   1, 0, 0, // x,y,r,g,b
+                         0.9, -0.9,   1, 1, 0, //
+                        -0.9,  0.9,   0, 0, 1, //
+                        -0.9,  0.9,   0, 0, 1, //
+                         0.9, -0.9,   1, 1, 0, //
+                         0.9,  0.9,   0, 1, 0, //
+                    ]);
 
                     const buf = gl.createBuffer();
                     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -137,12 +162,6 @@
                         gl.drawArrays(gl.TRIANGLES, 0, 6);
                     }
 
-                    function frame() {
-                        render();
-                        requestAnimationFrame(frame);
-                    }
-                    frame();
-
                     lkLog.appendChild(
                         document.createTextNode("WebGL loaded\n"),
                     );
@@ -154,6 +173,82 @@
                             "number",
                             "number",
                         ]);
+
+                        const gen = Module.cwrap("generate_block", "number", [
+                            "number",
+                        ]);
+                        const block_size = Module.cwrap(
+                            "block_size",
+                            "number",
+                        )();
+
+                        const ctx = new AudioContext({ sampleRate: 44100 });
+                        let nextTime = ctx.currentTime;
+                        const gain = ctx.createGain();
+                        gain.gain.setValueAtTime(0, ctx.currentTime); // start bei 0
+
+                        gain.connect(ctx.destination);
+                        function scheduleBlock() {
+                            const now = ctx.currentTime;
+
+                            while (nextTime < now + 0.08) {
+                                const ptr = gen(440 * m);
+                                const data = Module.HEAPF32.subarray(
+                                    ptr >> 2,
+                                    (ptr >> 2) + block_size,
+                                );
+                                const buf = ctx.createBuffer(
+                                    1,
+                                    block_size,
+                                    ctx.sampleRate,
+                                );
+                                buf.getChannelData(0).set(data);
+
+                                const src = ctx.createBufferSource();
+                                src.buffer = buf;
+                                src.connect(gain);
+                                src.start(nextTime);
+
+                                nextTime += block_size / ctx.sampleRate;
+                            }
+                        }
+
+                        function frame() {
+                            if (ctx.state === "running") {
+                                scheduleBlock();
+                            }
+                            render();
+                            requestAnimationFrame(frame);
+                        }
+                        frame();
+
+                        let audioOn = false;
+                        const fadeTime = 0.1;
+                        lkCanvas.addEventListener("click", async () => {
+                            if (ctx.state !== "running") {
+                                await ctx.resume();
+                                nextTime = ctx.currentTime;
+                            }
+                            const now = ctx.currentTime;
+                            if (audioOn) {
+                                gain.gain.cancelScheduledValues(now);
+                                gain.gain.setValueAtTime(gain.gain.value, now);
+                                gain.gain.linearRampToValueAtTime(
+                                    0.0,
+                                    ctx.currentTime + fadeTime,
+                                );
+                                audioOn = false;
+                            } else {
+                                audioOn = true;
+                                gain.gain.cancelScheduledValues(now);
+                                gain.gain.setValueAtTime(gain.gain.value, now);
+                                gain.gain.linearRampToValueAtTime(
+                                    1.0,
+                                    ctx.currentTime + fadeTime,
+                                );
+                            }
+                        });
+
                         window.addEventListener("pointermove", (evt) => {
                             m =
                                 mapMouse(
@@ -168,7 +263,7 @@
                             }
                             lkLog.appendChild(
                                 document.createTextNode(m + "\n"),
-                            ); // 5
+                            );
                         });
                         lkLog.appendChild(
                             document.createTextNode("WASM loaded\n"),
