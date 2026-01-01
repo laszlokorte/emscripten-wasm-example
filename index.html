@@ -23,7 +23,7 @@
                 </section>
             </div>
 
-            <script src="main.js">
+            <script src="build/main.js">
                 /* main.c
                 #ifdef __EMSCRIPTEN__
                 #include <emscripten/emscripten.h>
@@ -67,7 +67,7 @@
                   -O2 \
                   -s WASM=1 \
                   -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
-                  -o main.js
+                  -o build/main.js
                 */
             </script>
             <script>
